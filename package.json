@@ -31,6 +31,7 @@
     "@prisma/adapter-pg": "^7.0.0",
     "@prisma/client": "^7.0.0",
     "@types/pg": "^8.15.6",
+    "axios": "^1.13.2",
     "bullmq": "^5.64.1",
     "cache-manager": "^7.2.5",
     "class-transformer": "^0.5.1",

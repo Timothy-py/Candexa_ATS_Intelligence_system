@@ -5,6 +5,9 @@ import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
 import configuration from './config/env.configuration';
 import { validate } from './common/env.validation';
+import { BamboohrModule } from './resources/bamboohr/bamboohr.module';
+import { ConnectorsModule } from './resources/connectors/connectors.module';
+import { EventModule } from './resources/event/event.module';
 
 @Module({
   imports: [
@@ -15,6 +18,9 @@ import { validate } from './common/env.validation';
       cache: true,
       validate: validate,
     }),
+    BamboohrModule,
+    ConnectorsModule,
+    EventModule,
   ],
   controllers: [AppController],
   providers: [AppService],

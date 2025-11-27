@@ -1,0 +1,193 @@
+Priority 1 — Event Normalizer & Idempotent Ingestion (unblocker for everything)
+
+Why first: your sync currently writes raw provider payloads but you need a deterministic canonical event shape to compute time-in-stage, metrics, and issues. Normalization + idempotency prevents duplicates and gives downstream workers consistent inputs.
+
+Files to add / update
+	•	src/connectors/bamboohr/bamboohr.mapper.ts (new) — mapping functions BambooHR → canonical normalized object
+	•	src/events/event-normalizer.service.ts (new) — normalizer logic, idempotency check, normalization helpers
+	•	Update bamboohr.service.ts to call normalizer or enqueue normalization job instead of direct upsert insert (see next step)
+
+Quick subtasks
+	1.	Define canonical event JSON shape (type/interface): { eventType, providerEventId, provider, candidateExternalId, jobExternalId, stageFrom, stageTo, actor, timestamp, metadata }.
+	2.	Implement bamboohr.mapper.ts with pure functions:
+	•	mapApplicationToEvent(app): NormalizedEvent
+	•	normalize timestamps, map stage IDs → stage names, calculate duration_in_previous_stage when possible.
+	3.	Implement EventNormalizerService.normalize(rawEvent, connectorId):
+	•	Check providerEventId + connectorId uniqueness (Prisma unique constraint exists).
+	•	Populate normalized field and return either created or skipped status.
+	4.	Replace direct upsert in syncCandidateEvents with eventNormalizer.normalize(...) (or enqueue job to normalizer via BullMQ, see next priority).
+	5.	Unit tests for mapping functions.
+
+⸻
+
+Priority 2 — Sync Engine + Background Workers (BullMQ)
+
+Why: move heavy work off HTTP thread, make sync reliable and resumable, enable parallel processing and retry.
+
+Files to add / update
+	•	src/core/queue/queue.module.ts (new) — BullMQ setup
+	•	src/sync/sync.processor.ts (new) — processors: processEvent, normalizeEvent, updateCandidateSnapshot, computeStageMetrics, detectIssues
+	•	Update connectors.service.ts and bamboohr.service.ts to enqueue jobs instead of doing heavy sync inline (fullSync should enqueue a set of jobs + return quickly or await job completion if manual)
+	•	src/sync/worker-bootstrap.ts (new) — script to run workers in cluster (k8s job or separate process)
+
+Quick subtasks
+	1.	Add bullmq + ioredis and configure Redis in .env.
+	2.	Create queues: raw-events, normalized-events, snapshots, metrics, issues.
+	3.	Wire bamboohr.service.syncCandidateEvents to push raw payloads into raw-events queue (instead of Prisma upsert).
+	4.	Implement raw-events -> normalizeEvent processor that calls EventNormalizerService, writes atsCandidateEvent on success.
+	5.	Implement normalized-events -> updateCandidateSnapshot processor to update AtsCandidate.currentStage and lastEventAt (atomic).
+	6.	Implement snapshots -> computeStageMetrics processor to update AtsStageMetric aggregates (can be batched).
+	7.	Add job failure handling, retries and DLQ pattern.
+
+⸻
+
+Priority 3 — Candidate Snapshot Updater & Atomic Stage Updates
+
+Why: heatmap + metrics rely on accurate currentStage and lastEventAt.
+
+Files to add / update
+	•	src/events/candidate-snapshot.service.ts (new)
+	•	Update processors to call snapshot updater after event persisted
+
+Quick subtasks
+	1.	Snapshot updater fetches latest events for the candidate and writes AtsCandidate.currentStage, lastEventAt and optionally keeps a small stage_history in Redis/cache for quick compute.
+	2.	Ensure updates are idempotent (compare timestamps).
+	3.	Add DB index on AtsCandidate.lastEventAt if needed.
+
+⸻
+
+Priority 4 — Stage Duration Engine & Stage Metrics (heatmap core)
+
+Why: computes time-in-stage, average durations, and the stage-level data that drives the heatmap view.
+
+Files to add / update
+	•	src/analytics/stage-duration.service.ts (new)
+	•	src/analytics/job-aggregator.service.ts (new)
+	•	Update sync.processor to enqueue computeStageMetrics after snapshot changes
+
+Quick subtasks
+	1.	For each candidate, compute time_in_previous_stage from consecutive AtsCandidateEvent timestamps and write/update AtsStageMetric (incremental aggregation).
+	2.	Per-job aggregator computes: count per stage, avgDurationHours, drop-off points, pipeline velocity — persisted in AtsStageMetric table (or a new ats_job_metrics table if you prefer).
+	3.	Schedule periodic recompute (cron every X minutes) to correct drift and handle retroactive changes.
+
+⸻
+
+Priority 5 — Heatmap API Endpoints & Drilldowns (dashboard backend)
+
+Why: gives the frontend the data to render the heatmap and drilldown views.
+
+Files to add / update
+	•	src/analytics/analytics.controller.ts (new)
+	•	src/analytics/analytics.service.ts (new)
+
+Quick subtasks
+	1.	Implement endpoints:
+	•	GET /ats/jobs/:id/heatmap → returns stages, counts, avg duration, delay indicators
+	•	GET /ats/jobs/:id/stage/:name/candidates → candidate lists for drilldown with issues
+	•	GET /ats/jobs/:id/stats → pipeline-level stats
+	2.	Add pagination & filter params (stage, severity, age).
+	3.	Optimize Prisma queries and add necessary DB indexes.
+
+⸻
+
+Priority 6 — Rule-Based Issue Detection Worker
+
+Why: core of Phase 3 — detects bottlenecks and creates AtsIssue rows that feed automation triggers.
+
+Files to add / update
+	•	src/issues/rule-engine.service.ts (new)
+	•	src/issues/issues.processor.ts (new)
+	•	src/issues/issues.controller.ts (optional admin endpoints)
+
+Quick subtasks
+	1.	Implement detection rules (initial set):
+	•	Candidate idle > X days → idle
+	•	Missing feedback after interview → missing_feedback
+	•	Stage duration > org baseline → delay
+	•	Candidate stuck in same stage → idle/delay
+	2.	Worker runs every 10 minutes:
+	•	Query recently updated candidates/events
+	•	Evaluate rules
+	•	Upsert issues into AtsIssue (respect detectedAt and resolved flags)
+	3.	Add severity scoring logic mapping to IssueSeverity.
+
+⸻
+
+Priority 7 — Automation Triggers → Task Engine
+
+Why: Phase 4 — turn issues into recruiter actions.
+
+Files to add / update
+	•	src/triggers/trigger.processor.ts (new)
+	•	src/triggers/tasks.service.ts (new)
+	•	src/triggers/triggers.controller.ts (optional)
+
+Quick subtasks
+	1.	Map issues → tasks (create AtsTask) based on rules.
+	2.	Expose API: GET /ats/issues, GET /ats/tasks, PATCH /ats/tasks/:id.
+	3.	For MVF, frontend polling is fine; add email/Slack later.
+
+⸻
+
+Priority 8 — Real-time updates (SSE/WebSockets) & Notifications
+
+Why: improves UX — heatmap updates in real-time.
+
+Files to add / update
+	•	src/realtime/realtime.gateway.ts (WebSocket) or src/realtime/sse.service.ts
+	•	Hook processors to push events on queue completion
+
+Quick subtasks
+	1.	Implement SSE endpoint GET /realtime/updates?jobId=...
+	2.	Emit events from normalized-events, metrics, and issues processors.
+
+⸻
+
+Priority 9 — Monitoring, Metrics & Telemetry
+
+Why: production readiness — track worker health, queue lengths, LLM costs later.
+
+Files to add / update
+	•	Integrate Prometheus metrics, request tracing, Sentry (or similar)
+	•	Instrument: queue lengths, job latencies, LLM call counts, error rates
+
+⸻
+
+Priority 10 — Tests, Integration Tests & UAT
+
+Why: ensure correctness before release.
+
+Quick subtasks
+	1.	Unit tests for mapper & normalizer functions
+	2.	Integration tests with an in-memory DB or test Postgres container
+	3.	E2E test: run fullSync -> run workers -> validate candidate snapshots, metrics, and issue creation
+	4.	UAT with sample BambooHR connector data
+
+⸻
+
+Priority 11 — Deployment & Scheduler
+
+Why: make sync cron run and deploy workers.
+
+Quick subtasks
+	1.	Deploy worker as separate process (K8s Deployment or separate service)
+	2.	Deploy API service separately
+	3.	Create CronJob to run deltaSync every 5 minutes, or have a scheduler microservice that enqueues deltaSync jobs for all connectors.
+
+⸻
+
+Priority 12 — LLM-based pattern detection (defer until MVF stable)
+
+Why: optional for MVF — postpone until rules are tuned and telemetry collected.
+
+⸻
+
+Immediate next action (I’ll take this on if you want)
+
+Start with Priority 1 (Event Normalizer) — it’s the smallest, highest-impact step. Implementation outline I will generate next (no fluff):
+	•	bamboohr.mapper.ts with mapping functions and TypeScript types
+	•	event-normalizer.service.ts that:
+	•	accepts raw payload + connectorId,
+	•	computes providerEventId existence,
+	•	writes atsCandidateEvent using Prisma,
+	•	returns status + created event id.

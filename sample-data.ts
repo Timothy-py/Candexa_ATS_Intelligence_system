@@ -1,0 +1,33 @@
+const job = {
+  id: 22,
+  title: { id: null, label: 'Financial Analyst' },
+  postedDate: '2026-04-03T20:21:18+00:00',
+  location: {
+    id: 18352,
+    label: 'Salt Lake City, Utah',
+    address: {
+      name: 'Remote Worker',
+      description: null,
+      addressLine1: ' ',
+      addressLine2: null,
+      city: 'Salt Lake City',
+      state: 'Utah',
+      zipcode: '84042',
+      country: 'United States',
+      phoneNumber: null,
+    },
+  },
+  department: { id: 18259, label: 'Finance' },
+  status: { id: 1, label: 'Open' },
+  hiringLead: {
+    employeeId: 83,
+    firstName: 'Preston',
+    lastName: 'Wilder',
+    avatar: 'https://resources.bamboohr.com/images/photo_person_160x160.png',
+    jobTitle: { id: null, label: null },
+  },
+  newApplicantsCount: 1,
+  activeApplicantsCount: 1,
+  totalApplicantsCount: 1,
+  postingUrl: 'https://candexaai.bamboohr.com/jobs/view.php?id=22',
+};

@@ -1,3 +1,33 @@
+enum AtsProvider {
+  bamboohr
+  greenhouse
+  workable
+}
+
+enum JobStatus {
+  Open
+  Closed
+  Archived
+}
+
+enum IssueSeverity {
+  low
+  medium
+  high
+}
+
+enum IssueType {
+  idle
+  missing_feedback
+  delay
+  anomaly
+}
+
+enum TaskStatus {
+  open
+  completed
+}
+
 generator client {
   provider = "prisma-client"
   output   = "../generated/prisma"
@@ -5,4 +35,166 @@ generator client {
 
 datasource db {
   provider = "postgresql"
+}
+
+model AtsConnector {
+  id        String      @id @default(ulid())
+  orgId     String // FK to Django's organization table (read-only)
+  provider  AtsProvider
+  baseUrl   String?
+  apiKey    String?
+  subdomain String?
+  authMeta  Json?
+
+  lastFullSyncAt  DateTime?
+  lastDeltaSyncAt DateTime?
+  status          String    @default("connected") // connected, error, auth_required
+
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime?           @updatedAt
+  atsJobs            AtsJob[]
+  atsCandidates      AtsCandidate[]
+  atsCandidateEvents AtsCandidateEvent[]
+  atsStageMetrics    AtsStageMetric[]
+  atsIssues          AtsIssue[]
+}
+
+model AtsJob {
+  id             String     @id @default(ulid())
+  connectorId    String
+  externalJobId  String // ID from BambooHR/Greenhouse
+  title          String
+  department     String?
+  location       String?
+  employmentType String?
+  status         String?
+
+  hiringTeam Json? // recruiters, interviewers
+  raw        Json?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime? @updatedAt
+
+  connector AtsConnector @relation(fields: [connectorId], references: [id], onDelete: Cascade)
+
+  candidates         AtsCandidate[]
+  atsCandidateEvents AtsCandidateEvent[]
+  atsStageMetrics    AtsStageMetric[]
+  atsIssues          AtsIssue[]
+
+  @@unique([externalJobId, connectorId])
+  @@index([connectorId])
+}
+
+model AtsCandidate {
+  id                  String  @id @default(ulid())
+  connectorId         String
+  externalCandidateId String // From ATS provider
+  jobId               String?
+
+  fullName  String?
+  email     String?
+  phone     String?
+  source    String?
+  resumeUrl String?
+  tags      String[]
+
+  currentStage String?
+  lastEventAt  DateTime?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime? @updatedAt
+  raw       Json?
+
+  connector AtsConnector @relation(fields: [connectorId], references: [id], onDelete: Cascade)
+  job       AtsJob?      @relation(fields: [jobId], references: [id])
+
+  events    AtsCandidateEvent[]
+  atsIssues AtsIssue[]
+
+  @@unique([externalCandidateId, connectorId])
+  @@index([connectorId])
+  @@index([jobId])
+}
+
+model AtsCandidateEvent {
+  id          String  @id @default(ulid())
+  connectorId String
+  candidateId String
+  jobId       String?
+
+  providerEventId String? // Use for idempotency
+  provider        String // 'bamboohr' | 'greenhouse'
+
+  type      String // leave as free-text for now, keep structure
+  stageFrom String?
+  stageTo   String?
+
+  actor     String? // recruiter or system
+  timestamp DateTime // event timestamp
+
+  rawPayload Json?
+  normalized Json?
+
+  createdAt DateTime @default(now())
+
+  connector AtsConnector @relation(fields: [connectorId], references: [id], onDelete: Cascade)
+  candidate AtsCandidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  job       AtsJob?      @relation(fields: [jobId], references: [id])
+
+  @@unique([providerEventId, connectorId])
+  @@index([candidateId, timestamp])
+}
+
+model AtsStageMetric {
+  id          String @id @default(ulid())
+  connectorId String
+  jobId       String
+  stageName   String
+
+  candidateCount   Int     @default(0)
+  avgDurationHours Float? // average time spent
+  delaySeverity    String? // green | yellow | red
+
+  computedAt DateTime @default(now())
+
+  job       AtsJob       @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  connector AtsConnector @relation(fields: [connectorId], references: [id])
+}
+
+model AtsIssue {
+  id          String  @id @default(ulid())
+  connectorId String
+  candidateId String
+  jobId       String?
+
+  issueType   IssueType
+  severity    IssueSeverity
+  description String?
+
+  detectedAt DateTime @default(now())
+  resolved   Boolean  @default(false)
+
+  connector AtsConnector @relation(fields: [connectorId], references: [id])
+  candidate AtsCandidate @relation(fields: [candidateId], references: [id])
+  job       AtsJob?      @relation(fields: [jobId], references: [id])
+  atsTasks  AtsTask[]
+
+  @@index([connectorId, resolved])
+}
+
+model AtsTask {
+  id      String @id @default(ulid())
+  issueId String
+
+  status   TaskStatus @default(open) // open | completed
+  taskType String // e.g. 'follow_up', 'submit_feedback'
+  assignee String? // recruiter ID from Django or ATS
+
+  dueAt     DateTime?
+  createdAt DateTime  @default(now())
+
+  issue AtsIssue @relation(fields: [issueId], references: [id], onDelete: Cascade)
+
+  @@index([issueId, status])
 }
