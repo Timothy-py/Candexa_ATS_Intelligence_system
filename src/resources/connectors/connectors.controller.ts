@@ -4,10 +4,12 @@ import {
   Param,
   HttpException,
   HttpStatus,
+  ParseBoolPipe,
+  Query,
 } from '@nestjs/common';
 import { ConnectorsService } from './connectors.service';
 import { BamboohrService } from '../bamboohr/bamboohr.service';
-import { ApiOperation, ApiParam } from '@nestjs/swagger';
+import { ApiOperation, ApiParam, ApiQuery } from '@nestjs/swagger';
 
 @Controller('connectors')
 export class ConnectorsController {
@@ -55,10 +57,31 @@ export class ConnectorsController {
 
   /**
    * GET /connectors/:id/full-sync
-   * Executes a full sync immediately.
+   * Executes a full sync immediately, default enqueues a background job.
+   * Query param: ?runInline=true to run synchronously (blocking).
    */
+  @ApiOperation({
+    summary: 'Trigger full sync for connector',
+    description:
+      'Starts a full sync for the connector. By default this enqueues a background job. Use ?runInline=true to run inline (blocking).',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'The ID of the connector to sync',
+    required: true,
+  })
+  @ApiQuery({
+    name: 'runInline',
+    required: false,
+    type: Boolean,
+    description: 'If true, run the sync inline (blocking) instead of enqueuing',
+  })
   @Get(':id/full-sync')
-  async runFullSync(@Param('id') connectorId: string) {
+  async runFullSync(
+    @Param('id') connectorId: string,
+    @Query('runInline', new ParseBoolPipe({ optional: true }))
+    runInline = false,
+  ) {
     if (!connectorId) {
       throw new HttpException(
         'Connector ID is required',
@@ -66,12 +89,56 @@ export class ConnectorsController {
       );
     }
 
-    await this.connectors.fullSync(connectorId);
+    const result = await this.connectors.fullSync(connectorId, runInline);
+
+    // If enqueued, connectors.fullSync returns { queued: true, jobId }
+    // If inline, it returns the sync summary
+    return {
+      connectorId,
+      ok: true,
+      result,
+      timestamp: new Date(),
+    };
+  }
+
+  /**
+   * GET /connectors/:id/delta-sync
+   * Executes a delta sync. By default runs inline; pass ?enqueue=true to enqueue as a background job.
+   */
+  @ApiOperation({
+    summary: 'Trigger delta sync for connector',
+    description:
+      'Starts a delta sync for the connector. By default this runs inline. Use ?enqueue=true to enqueue a background job.',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'The ID of the connector to delta-sync',
+    required: true,
+  })
+  @ApiQuery({
+    name: 'enqueue',
+    required: false,
+    type: Boolean,
+    description: 'If true, enqueue the delta sync as a background job',
+  })
+  @Get(':id/delta-sync')
+  async runDeltaSync(
+    @Param('id') connectorId: string,
+    @Query('enqueue', new ParseBoolPipe({ optional: true })) enqueue = false,
+  ) {
+    if (!connectorId) {
+      throw new HttpException(
+        'Connector ID is required',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    const result = await this.connectors.deltaSync(connectorId, enqueue);
 
     return {
       connectorId,
       ok: true,
-      message: 'Full sync completed successfully',
+      result,
       timestamp: new Date(),
     };
   }

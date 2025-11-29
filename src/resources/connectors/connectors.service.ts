@@ -7,58 +7,72 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { BamboohrService } from '../bamboohr/bamboohr.service';
 import { prisma } from 'src/core/database/database.service';
+import { QueueService } from 'src/core/queue/queue.service';
 
 @Injectable()
 export class ConnectorsService {
   private readonly logger = new Logger(ConnectorsService.name);
   private readonly prisma = prisma;
 
-  constructor(private readonly bamboo: BamboohrService) {}
+  constructor(
+    private readonly bamboo: BamboohrService,
+    private readonly queueService: QueueService,
+  ) {}
 
   /**
    * FULL SYNC
+   * enqueue background job by default
    * Performs full import of:
    *  - Jobs (ATS job openings)
    *  - Candidates (deduped applicants derived from applications)
    *  - Candidate Events (normalized)
    *
-   * This is used on first connector setup or manual re-sync.
    */
-  async fullSync(connectorId: string) {
-    this.logger.log(`Starting FULL SYNC for connector: ${connectorId}`);
+  async fullSync(connectorId: string, runInline = false) {
+    this.logger.log(
+      `Starting FULL SYNC for connector: ${connectorId} (runInline=${runInline})`,
+    );
 
-    const startedAt = Date.now();
+    if (runInline) {
+      // legacy inline behavior for debugging
+      const start = Date.now();
+      try {
+        const jobs = await this.bamboo.syncJobs(connectorId);
+        const candidates = await this.bamboo.syncCandidates(connectorId);
+        const events = await this.bamboo.syncCandidateEvents(connectorId);
 
-    try {
-      const jobs = await this.bamboo.syncJobs(connectorId);
-      const candidates = await this.bamboo.syncCandidates(connectorId);
-      const events = await this.bamboo.syncCandidateEvents(connectorId);
+        await this.prisma.atsConnector.update({
+          where: { id: connectorId },
+          data: {
+            lastFullSyncAt: new Date(),
+            lastDeltaSyncAt: null,
+            status: 'connected',
+          },
+        });
 
-      await this.prisma.atsConnector.update({
-        where: { id: connectorId },
-        data: {
-          lastFullSyncAt: new Date(),
-          lastDeltaSyncAt: null, // reset delta pointer
-          status: 'connected',
-        },
-      });
+        this.logger.log(
+          `FULL SYNC COMPLETE (inline) — Jobs: ${jobs}, Candidates: ${candidates}, Events: ${events}, Duration: ${Date.now() - start}ms`,
+        );
 
-      const duration = Date.now() - startedAt;
-      this.logger.log(
-        `FULL SYNC COMPLETE — Jobs: ${jobs}, Candidates: ${candidates}, Events: ${events}, Duration: ${duration}ms`,
-      );
-
-      return { jobs, candidates, events, duration };
-    } catch (error) {
-      this.logger.error(`FULL SYNC FAILED for connector ${connectorId}`, error);
-
-      await this.prisma.atsConnector.update({
-        where: { id: connectorId },
-        data: { status: 'error' },
-      });
-
-      throw error;
+        return { jobs, candidates, events };
+      } catch (err) {
+        this.logger.error(`FULL SYNC FAILED (inline)`, err);
+        await this.prisma.atsConnector.update({
+          where: { id: connectorId },
+          data: { status: 'error' },
+        });
+        throw err;
+      }
     }
+
+    // Default behavior: enqueue a background sync job
+    const job = await this.queueService.addSyncJob(connectorId, 'full', {
+      attempts: 3,
+    });
+    this.logger.log(
+      `Enqueued FULL SYNC job ${job.id} for connector ${connectorId}`,
+    );
+    return { queued: true, jobId: job.id };
   }
 
   /**
@@ -70,65 +84,46 @@ export class ConnectorsService {
    *
    * If BambooHR adds `updatedSince` support we plug it in here.
    */
-  async deltaSync(connectorId: string) {
-    this.logger.log(`Starting DELTA SYNC for connector: ${connectorId}`);
+  async deltaSync(connectorId: string, enqueue = false) {
+    this.logger.log(
+      `Starting DELTA SYNC for ${connectorId} (enqueue=${enqueue})`,
+    );
 
+    if (enqueue) {
+      const job = await this.queueService.addSyncJob(connectorId, 'delta', {
+        attempts: 3,
+      });
+      this.logger.log(
+        `Enqueued DELTA SYNC job ${job.id} for connector ${connectorId}`,
+      );
+      return { queued: true, jobId: job.id };
+    }
+
+    // inline delta sync
     const connector = await this.prisma.atsConnector.findUnique({
       where: { id: connectorId },
     });
 
-    if (!connector) {
-      throw new Error(`Connector not found: ${connectorId}`);
-    }
-
-    // Best available "since" cursor
-    const since =
-      connector.lastDeltaSyncAt ??
-      connector.lastFullSyncAt ??
-      new Date('1970-01-01');
-
-    const startedAt = Date.now();
+    const since = connector?.lastDeltaSyncAt ?? connector?.lastFullSyncAt;
 
     try {
-      // --- 1. Jobs (cheap) ---------------------------------------
       const jobs = await this.bamboo.syncJobs(connectorId);
-
-      // --- 2. Candidates (new applicants or updated applicants) -----
-      // Currently derived from full application pagination because BambooHR
-      // may not support updatedSince. We will filter inside sync logic.
-      const candidates = await this.bamboo.syncCandidates(connectorId);
-
-      // --- 3. Events (only new providerEventIds will be inserted) ----
+      const applicants = await this.bamboo.syncCandidates(connectorId);
       const events = await this.bamboo.syncCandidateEvents(connectorId);
 
-      // Update delta pointer
       await this.prisma.atsConnector.update({
         where: { id: connectorId },
-        data: {
-          lastDeltaSyncAt: new Date(),
-          status: 'connected',
-        },
+        data: { lastDeltaSyncAt: new Date(), status: 'connected' },
       });
 
-      const duration = Date.now() - startedAt;
-
-      this.logger.log(
-        `DELTA SYNC COMPLETE — Jobs: ${jobs}, Candidates: ${candidates}, Events: ${events}, Duration: ${duration}ms`,
-      );
-
-      return { jobs, candidates, events, duration, since };
-    } catch (error) {
-      this.logger.error(
-        `DELTA SYNC FAILED for connector ${connectorId}`,
-        error,
-      );
-
+      return { jobs, applicants, events };
+    } catch (err) {
       await this.prisma.atsConnector.update({
         where: { id: connectorId },
         data: { status: 'error' },
       });
 
-      throw error;
+      throw err;
     }
   }
 }

@@ -14,13 +14,14 @@ import { BamboohrClient } from './bamboohr.client';
 import { prisma } from 'src/core/database/database.service';
 import { EventNormalizerService } from '../event/event.normalizer';
 import { mapApplicationToEvent } from './bamboohr.mapper';
+import { QueueService } from 'src/core/queue/queue.service';
 
 @Injectable()
 export class BamboohrService {
   private readonly logger = new Logger(BamboohrService.name);
   private readonly prisma = prisma;
 
-  constructor(private readonly eventNormalizer: EventNormalizerService) {}
+  constructor(private readonly queueService: QueueService) {}
 
   /** Initialize BambooHR Client with correct keys */
   private async initClient(connectorId: string): Promise<BamboohrClient> {
@@ -77,75 +78,75 @@ export class BamboohrService {
    * Uses cursor-based or page-limit style depending on returned meta.
    * For MVF we implement a simple loop that requests until no nextCursor or no nextPageUrl.
    */
-  private async fetchAllPages(path: string, params: any = {}) {
-    const client: any = this.clientFromPath(path, params);
-    const results: any[] = [];
-    let afterCursor: string | null = null;
-    let page = 1;
-    // Attempt cursor-mode first, fallback to page increments
-    while (true) {
-      const reqParams = { ...params };
-      if (afterCursor) {
-        // cursor-based param common naming: page[after] or page[afterCursor] — try `page[after]`
-        reqParams.page = { ...reqParams.page, after: afterCursor };
-      } else {
-        // page fallback
-        reqParams.page = { ...reqParams.page, number: page, limit: 200 };
-      }
+  // private async fetchAllPages(path: string, params: any = {}) {
+  //   const client: any = this.clientFromPath(path, params);
+  //   const results: any[] = [];
+  //   let afterCursor: string | null = null;
+  //   let page = 1;
+  //   // Attempt cursor-mode first, fallback to page increments
+  //   while (true) {
+  //     const reqParams = { ...params };
+  //     if (afterCursor) {
+  //       // cursor-based param common naming: page[after] or page[afterCursor] — try `page[after]`
+  //       reqParams.page = { ...reqParams.page, after: afterCursor };
+  //     } else {
+  //       // page fallback
+  //       reqParams.page = { ...reqParams.page, number: page, limit: 200 };
+  //     }
 
-      // Use client's apiGet (it will prefix /api/v1)
-      const resp = await client.apiGet(path, reqParams).catch((err) => {
-        this.logger.error(`Pagination request failed for ${path}`, err);
-        throw err;
-      });
+  //     // Use client's apiGet (it will prefix /api/v1)
+  //     const resp = await client.apiGet(path, reqParams).catch((err) => {
+  //       this.logger.error(`Pagination request failed for ${path}`, err);
+  //       throw err;
+  //     });
 
-      const list = this.extractList(resp);
-      if (list.length) {
-        results.push(...list);
-      }
+  //     const list = this.extractList(resp);
+  //     if (list.length) {
+  //       results.push(...list);
+  //     }
 
-      // Try to detect cursor/next from known shapes
-      const nextCursor =
-        resp?.meta?.page?.nextCursor ??
-        resp?.meta?.nextCursor ??
-        resp?.nextPageUrl ??
-        resp?.links?.next ??
-        null;
+  //     // Try to detect cursor/next from known shapes
+  //     const nextCursor =
+  //       resp?.meta?.page?.nextCursor ??
+  //       resp?.meta?.nextCursor ??
+  //       resp?.nextPageUrl ??
+  //       resp?.links?.next ??
+  //       null;
 
-      if (nextCursor) {
-        // If it's a full URL (nextPageUrl), we cannot pass it to apiGet directly;
-        // try to extract a cursor param from it — but for MVF, if nextPageUrl exists,
-        // attempt one more server-side request by calling apiGet with no params and break to avoid infinite loops.
-        // Safer approach: if nextCursor string looks like a URL, break and return results to avoid stuck loops.
-        if (typeof nextCursor === 'string' && nextCursor.startsWith('http')) {
-          this.logger.warn(
-            `Received nextPageUrl (absolute) from BambooHR; fetched ${results.length} items and stopping. If you need full pagination, we should implement nextPageUrl parsing.`,
-          );
-          break;
-        }
+  //     if (nextCursor) {
+  //       // If it's a full URL (nextPageUrl), we cannot pass it to apiGet directly;
+  //       // try to extract a cursor param from it — but for MVF, if nextPageUrl exists,
+  //       // attempt one more server-side request by calling apiGet with no params and break to avoid infinite loops.
+  //       // Safer approach: if nextCursor string looks like a URL, break and return results to avoid stuck loops.
+  //       if (typeof nextCursor === 'string' && nextCursor.startsWith('http')) {
+  //         this.logger.warn(
+  //           `Received nextPageUrl (absolute) from BambooHR; fetched ${results.length} items and stopping. If you need full pagination, we should implement nextPageUrl parsing.`,
+  //         );
+  //         break;
+  //       }
 
-        afterCursor = String(nextCursor);
-        page += 1;
-        continue;
-      }
+  //       afterCursor = String(nextCursor);
+  //       page += 1;
+  //       continue;
+  //     }
 
-      // No next cursor; break
-      break;
-    }
+  //     // No next cursor; break
+  //     break;
+  //   }
 
-    return results;
-  }
+  //   return results;
+  // }
 
   // Helper that returns a client (loads connector) for internal use
-  private clientFromPath(path: string, params?: any) {
-    // path not used for client creation, but keep pattern
-    // Returns an initialized client instance (wraps initClient but ignoring connectorId)
-    // We will call initClient in the caller to obtain correct client per-connector.
-    // This function exists to keep typing consistent in fetchAllPages; caller must pass client in practice.
-    throw new Error(
-      'clientFromPath should not be called directly. Use initClient(connectorId) and pass the client.',
-    );
-  }
+  // private clientFromPath(path: string, params?: any) {
+  //   // path not used for client creation, but keep pattern
+  //   // Returns an initialized client instance (wraps initClient but ignoring connectorId)
+  //   // We will call initClient in the caller to obtain correct client per-connector.
+  //   // This function exists to keep typing consistent in fetchAllPages; caller must pass client in practice.
+  //   throw new Error(
+  //     'clientFromPath should not be called directly. Use initClient(connectorId) and pass the client.',
+  //   );
+  // }
 
   /** ============================
    *  SYNC JOBS (ATS API)
@@ -323,13 +324,13 @@ export class BamboohrService {
   async syncCandidateEvents(connectorId: string) {
     const client = await this.initClient(connectorId);
 
-    let page = 1;
     const pageLimit = 200;
-    let eventsCreated = 0;
+    let page = 1;
+    let pagesEnqueued = 0;
+    let totalApplications = 0;
 
     while (true) {
-      const params = { page }; // simple integer as required by OpenAPI
-
+      const params = { page }; // BambooHR expects simple integer page param
       const resp = await client.getApplications(params).catch((err) => {
         this.logger.error('Failed to fetch applications for events', {
           connectorId,
@@ -340,31 +341,25 @@ export class BamboohrService {
       });
 
       const apps = this.extractList(resp);
-      if (!apps || apps.length === 0) break;
+      if (!apps || apps.length === 0) {
+        break;
+      }
 
-      for (const app of apps) {
-        const normalized = mapApplicationToEvent(app, connectorId);
-
-        try {
-          const result =
-            await this.eventNormalizer.normalizeAndPersist(normalized);
-          if (result.created) {
-            eventsCreated++;
-            this.logger.log(
-              `Normalized event created for providerEventId=${normalized.providerEventId}`,
-            );
-          } else {
-            this.logger.debug(
-              `Normalized event skipped/updated for providerEventId=${normalized.providerEventId}: ${result.reason}`,
-            );
-          }
-        } catch (err: any) {
-          this.logger.error('Failed to normalize/persist event', {
-            providerEventId: normalized.providerEventId,
-            err,
-          });
-          // continue with other events — don't let one failure stop the sync
-        }
+      // Enqueue raw page for background processing
+      try {
+        await this.queueService.addRawEventsPage(connectorId, page, apps);
+        pagesEnqueued++;
+        totalApplications += apps.length;
+        this.logger.log(
+          `Enqueued raw-events page ${page} (count=${apps.length}) for connector ${connectorId}`,
+        );
+      } catch (err) {
+        this.logger.error('Failed to enqueue raw-events page', {
+          connectorId,
+          page,
+          err,
+        });
+        // Continue — don't break the entire sync for a single enqueue failure
       }
 
       const paginationComplete =
@@ -384,7 +379,7 @@ export class BamboohrService {
         nextPageUrl.startsWith('http')
       ) {
         this.logger.warn(
-          'Received nextPageUrl (absolute). Stopping after current page; implement nextPageUrl parsing if you need full traversal.',
+          'BambooHR returned nextPageUrl (absolute) — stopping pagination after current page for safety.',
         );
         break;
       }
@@ -393,27 +388,29 @@ export class BamboohrService {
       page += 1;
     }
 
-    this.logger.log(`Synced application events (normalized): ${eventsCreated}`);
-    return eventsCreated;
+    this.logger.log(
+      `Enqueued ${pagesEnqueued} raw event pages (total applications: ${totalApplications}) for connector ${connectorId}`,
+    );
+    return { pagesEnqueued, totalApplications };
   }
 
   /** Resolve canonical internal jobId from provider external ID */
-  private async resolveJobId(
-    externalJobId: number | string,
-    connectorId: string,
-  ) {
-    if (!externalJobId) return null;
-    const job = await this.prisma.atsJob.findUnique({
-      where: {
-        externalJobId_connectorId: {
-          externalJobId: String(externalJobId),
-          connectorId,
-        },
-      },
-    });
+  // private async resolveJobId(
+  //   externalJobId: number | string,
+  //   connectorId: string,
+  // ) {
+  //   if (!externalJobId) return null;
+  //   const job = await this.prisma.atsJob.findUnique({
+  //     where: {
+  //       externalJobId_connectorId: {
+  //         externalJobId: String(externalJobId),
+  //         connectorId,
+  //       },
+  //     },
+  //   });
 
-    return job ? job.id : null;
-  }
+  //   return job ? job.id : null;
+  // }
 
   async testConnection(connectorId: string) {
     // 1. Load connector config

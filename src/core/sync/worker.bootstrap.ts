@@ -6,10 +6,10 @@
  * Ensure your AppModule imports QueueModule so processors and BullModule are registered.
  *
  * Example npm script (dev):
- *   "start:worker": "ts-node -r tsconfig-paths/register src/sync/worker.bootstrap.ts"
+ *   "start:worker": "ts-node -r tsconfig-paths/register src/core/sync/worker.bootstrap.ts"
  *
  * In production run built JS:
- *   node dist/sync/worker.bootstrap.js
+ *   node dist/core/sync/worker.bootstrap.js
  */
 
 import { NestFactory } from '@nestjs/core';

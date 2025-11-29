@@ -13,6 +13,8 @@ import { createKeyv, Keyv } from '@keyv/redis';
 import { CacheModule } from '@nestjs/cache-manager';
 import { QueueModule } from './core/queue/queue.module';
 import { SyncModule } from './core/sync/sync.module';
+import { BullBoardModule } from '@bull-board/nestjs';
+import { ExpressAdapter } from '@bull-board/express';
 
 @Module({
   imports: [
@@ -44,6 +46,10 @@ import { SyncModule } from './core/sync/sync.module';
         };
       },
       inject: [ConfigService],
+    }),
+    BullBoardModule.forRoot({
+      route: '/admin/queues',
+      adapter: ExpressAdapter,
     }),
     BamboohrModule,
     ConnectorsModule,
