@@ -36,7 +36,7 @@ export class EventNormalizerService {
             connectorId: event.connectorId,
           },
         },
-        select: { id: true },
+        select: { id: true, currentStage: true },
       });
     }
 
@@ -55,13 +55,16 @@ export class EventNormalizerService {
     }
 
     // Build create payload for AtsCandidateEvent
+    const prevStageTo = candidate ? candidate.currentStage : 'New';
+    const latestStageTo =
+      event.stageTo ?? event.metadata?.status?.label ?? null;
     const createPayload: any = {
       connectorId: event.connectorId,
       providerEventId: event.providerEventId,
       provider: event.provider,
       type: event.eventType,
-      stageFrom: event.stageFrom ?? null,
-      stageTo: event.stageTo ?? null,
+      stageFrom: prevStageTo,
+      stageTo: latestStageTo ?? prevStageTo,
       actor: event.actor ?? null,
       timestamp: new Date(event.timestamp),
       rawPayload: event.raw ?? null,
