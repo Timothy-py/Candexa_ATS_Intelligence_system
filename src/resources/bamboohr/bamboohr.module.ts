@@ -38,5 +38,6 @@ import { BullMQAdapter } from '@bull-board/api/bullMQAdapter';
   ],
   controllers: [BamboohrController],
   providers: [BamboohrService, EventNormalizerService, QueueService],
+  exports: [BamboohrService, EventNormalizerService],
 })
 export class BamboohrModule {}

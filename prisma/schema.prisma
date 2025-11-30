@@ -60,7 +60,7 @@ model AtsConnector {
 }
 
 model AtsJob {
-  id             String     @id @default(ulid())
+  id             String  @id @default(ulid())
   connectorId    String
   externalJobId  String // ID from BambooHR/Greenhouse
   title          String
@@ -115,6 +115,7 @@ model AtsCandidate {
   @@unique([externalCandidateId, connectorId])
   @@index([connectorId])
   @@index([jobId])
+  @@index([lastEventAt])
 }
 
 model AtsCandidateEvent {

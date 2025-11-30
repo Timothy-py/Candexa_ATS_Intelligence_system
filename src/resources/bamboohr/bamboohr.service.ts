@@ -12,8 +12,6 @@ import {
 } from '@nestjs/common';
 import { BamboohrClient } from './bamboohr.client';
 import { prisma } from 'src/core/database/database.service';
-import { EventNormalizerService } from '../event/event.normalizer';
-import { mapApplicationToEvent } from './bamboohr.mapper';
 import { QueueService } from 'src/core/queue/queue.service';
 
 @Injectable()

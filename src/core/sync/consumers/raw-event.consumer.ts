@@ -2,13 +2,13 @@ import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import { Logger } from '@nestjs/common';
 import { JOB_NAMES, JobQueues } from 'src/common/enums';
-import { SyncProcessor } from '../processors/sync.processor';
+import { SyncService } from '../sync.service';
 
 @Processor(JobQueues.RAW_EVENTS)
 export class RawEventConsumer extends WorkerHost {
   private readonly logger = new Logger(RawEventConsumer.name);
 
-  constructor(private readonly processor: SyncProcessor) {
+  constructor(private readonly processor: SyncService) {
     super();
   }
 

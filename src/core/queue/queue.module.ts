@@ -34,5 +34,6 @@ import { BullMQAdapter } from '@bull-board/api/bullMQAdapter';
     ),
   ],
   providers: [QueueService],
+  exports: [QueueService],
 })
 export class QueueModule {}
