@@ -15,6 +15,7 @@ import { QueueModule } from './core/queue/queue.module';
 import { SyncModule } from './core/sync/sync.module';
 import { BullBoardModule } from '@bull-board/nestjs';
 import { ExpressAdapter } from '@bull-board/express';
+import { AnalyticsModule } from './resources/analytics/analytics.module';
 
 @Module({
   imports: [
@@ -56,6 +57,7 @@ import { ExpressAdapter } from '@bull-board/express';
     EventModule,
     QueueModule,
     SyncModule,
+    AnalyticsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

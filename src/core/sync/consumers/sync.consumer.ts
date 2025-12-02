@@ -21,6 +21,9 @@ export class SyncConsumer extends WorkerHost {
         case JOB_NAMES.DELTA_SYNC:
           await this.processor.handleDeltaSync(job.data);
           break;
+        case JOB_NAMES.COMPUTE_METRICS:
+          await this.processor.handleComputeMetrics(job.data);
+          break;
         default:
           this.logger.warn(`Unknown job name: ${job.name}`);
           break;

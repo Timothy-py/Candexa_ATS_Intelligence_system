@@ -9,5 +9,6 @@ export const JOB_NAMES = {
   DELTA_SYNC: 'delta-sync',
   RAW_APP_PAGE: 'raw-app-page',
   NORMALIZE_APPLICATION: 'normalize-application',
+  COMPUTE_METRICS: 'compute-metrics',
 };
 export type JobNames = (typeof JOB_NAMES)[keyof typeof JOB_NAMES];

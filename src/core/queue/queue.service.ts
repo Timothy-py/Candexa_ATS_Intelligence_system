@@ -86,4 +86,30 @@ export class QueueService {
   getNormalizeQueue() {
     return this.normalizeQueue;
   }
+
+  // in src/core/queue/queue.service.ts (add method)
+  async addComputeStageMetrics(
+    connectorId: string,
+    eventId?: string,
+    jobId?: string,
+    candidateId?: string,
+    opts?: any,
+  ) {
+    // reuse SYNC_QUEUE or create a dedicated METRICS queue.
+    // For MVF, we will add a simple job to SYNC_QUEUE with name 'compute-metrics' to keep infra small.
+    const job = await this.syncQueue.add(
+      JOB_NAMES.COMPUTE_METRICS,
+      { connectorId, jobId, candidateId, eventId },
+      {
+        removeOnComplete: true,
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 1000 },
+        ...opts,
+      },
+    );
+    this.logger.log(
+      `Enqueued compute-metrics job ${job.id} connector=${connectorId} job=${jobId} candidate=${candidateId}`,
+    );
+    return job;
+  }
 }

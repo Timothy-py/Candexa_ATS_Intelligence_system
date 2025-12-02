@@ -116,6 +116,8 @@ model AtsCandidate {
   @@index([connectorId])
   @@index([jobId])
   @@index([lastEventAt])
+  @@index([jobId, connectorId, currentStage])
+  @@index([jobId, connectorId, lastEventAt])
 }
 
 model AtsCandidateEvent {
@@ -145,6 +147,7 @@ model AtsCandidateEvent {
 
   @@unique([providerEventId, connectorId])
   @@index([candidateId, timestamp])
+  @@index([jobId, candidateId, timestamp])
 }
 
 model AtsStageMetric {
@@ -153,14 +156,20 @@ model AtsStageMetric {
   jobId       String
   stageName   String
 
-  candidateCount   Int     @default(0)
-  avgDurationHours Float? // average time spent
-  delaySeverity    String? // green | yellow | red
+  // Number of duration samples recorded for this stage
+  candidateCount     Int     @default(0)
+  // Sum of all duration samples for this stage (in hours)
+  totalDurationHours Float   @default(0)
+  // Derived average = totalDurationHours / candidateCount
+  avgDurationHours   Float? // average time spent
+  delaySeverity      String? // green | yellow | red
 
   computedAt DateTime @default(now())
 
   job       AtsJob       @relation(fields: [jobId], references: [id], onDelete: Cascade)
   connector AtsConnector @relation(fields: [connectorId], references: [id])
+
+  @@index([connectorId, jobId, stageName])
 }
 
 model AtsIssue {
@@ -182,6 +191,7 @@ model AtsIssue {
   atsTasks  AtsTask[]
 
   @@index([connectorId, resolved])
+  @@index([connectorId, jobId, severity, resolved])
 }
 
 model AtsTask {

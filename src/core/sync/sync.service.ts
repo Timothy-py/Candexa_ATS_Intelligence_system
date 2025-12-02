@@ -10,6 +10,8 @@ import { mapApplicationToEvent } from 'src/resources/bamboohr/bamboohr.mapper';
 import { EventNormalizerService } from 'src/resources/event/event.normalizer';
 import { CandidateSnapshotService } from 'src/resources/event/candidate-snapshot.service';
 import { BamboohrService } from 'src/resources/bamboohr/bamboohr.service';
+import { StageDurationService } from 'src/resources/analytics/stage-duration.service';
+import { JobAggregatorService } from 'src/resources/analytics/job-aggregator.service';
 
 @Injectable()
 export class SyncService {
@@ -21,6 +23,8 @@ export class SyncService {
     private readonly queueService: QueueService,
     private readonly eventNormalizer: EventNormalizerService,
     private readonly snapshotService: CandidateSnapshotService,
+    private readonly stageDuration: StageDurationService,
+    private readonly jobAggregator: JobAggregatorService,
   ) {}
 
   async handleFullSync(data: any) {
@@ -135,6 +139,13 @@ export class SyncService {
           const snap = await this.snapshotService.updateFromEvent(
             result.eventId,
           );
+          await this.queueService.addComputeStageMetrics(
+            connectorId,
+            result.eventId,
+            /* jobId */
+            /* candidateId */
+          );
+
           if (snap.updated) {
             this.logger.debug(
               `Snapshot updated for candidate ${snap.candidateId} from event ${result.eventId}`,
@@ -169,6 +180,37 @@ export class SyncService {
         connectorId,
         err: err?.message ?? err,
       });
+      throw err;
+    }
+  }
+
+  async handleComputeMetrics(data: any) {
+    const { connectorId, eventId, jobId, candidateId } = data;
+    this.logger.log(
+      `MetricsProcessor: compute job connector=${connectorId} job=${jobId} candidate=${candidateId} event=${eventId}`,
+    );
+
+    try {
+      if (eventId) {
+        // compute duration for the event (incremental)
+        await this.stageDuration.computeDurationFromEvent(eventId);
+      } else if (candidateId && jobId) {
+        // recompute metrics for candidate's job (re-scan events for this candidate)
+        // We'll simply reconcile job-level for now
+        await this.jobAggregator.computeJobHeatmap(jobId, connectorId);
+      } else if (jobId) {
+        // full job-level reconcile
+        await this.stageDuration.reconcileJobMetrics(jobId, connectorId);
+        await this.jobAggregator.computeJobHeatmap(jobId, connectorId);
+      } else {
+        // nothing specified — do nothing
+        this.logger.debug(
+          'MetricsProcessor: no jobId/eventId provided; skipping',
+        );
+      }
+      return { ok: true };
+    } catch (err) {
+      this.logger.error('MetricsProcessor: error', err);
       throw err;
     }
   }
